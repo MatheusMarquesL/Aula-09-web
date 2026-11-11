@@ -1,27 +1,69 @@
+import { PrismaClient } from "@prisma/client";
 
-import { Produto } from "./types";
+const prisma = new PrismaClient();
 
-export const produtos: Produto[] = [
-  {
-    id: 1,
-    nome: "Teclado",
-    preco: 150,
-    estoque: 8
-  },
-  {
-    id: 2,
-    nome: "Mouse",
-    preco: 80,
-    estoque: 10
-  },
-  {
-    id: 3,
-    nome: "Monitor",
-    preco: 200,
-    estoque: 5
+export async function listarProdutos() {
+  return prisma.produto.findMany();
+}
+
+export async function buscarProduto(id: number) {
+  return prisma.produto.findUnique({
+    where: { id }
+  });
+}
+
+export async function criarProduto(
+  nome: string,
+  preco: number,
+  estoque: number
+) {
+  return prisma.produto.create({
+    data: {
+      nome,
+      preco,
+      estoque
+    }
+  });
+}
+
+export async function reservarProduto(
+  id: number,
+  quantidade: number
+) {
+  const resultado = await prisma.produto.updateMany({
+    where: {
+      id,
+      estoque: {
+        gte: quantidade
+      }
+    },
+    data: {
+      estoque: {
+        decrement: quantidade
+      }
+    }
+  });
+
+  if (resultado.count === 0) {
+    const produto = await buscarProduto(id);
+
+    if (!produto) {
+      return { tipo: "nao_encontrado" as const };
+    }
+
+    return { tipo: "estoque_insuficiente" as const };
   }
-];
 
-export function buscarProduto(id: number): Produto | undefined {
-  return produtos.find((produto) => produto.id === id);
+  const produto = await buscarProduto(id);
+
+  return {
+    tipo: "sucesso" as const,
+    reservado: quantidade,
+    estoqueRestante: produto!.estoque,
+    produto: {
+      id: produto!.id,
+      nome: produto!.nome,
+      preco: produto!.preco
+    }
+  };
 }

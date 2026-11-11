@@ -1,14 +1,29 @@
-
 import { Router } from "express";
-import { produtos, buscarProduto } from "./produtos";
+
+import {
+  listarProdutos,
+  buscarProduto,
+  criarProduto,
+  reservarProduto
+} from "./produtos";
 
 const router = Router();
 
-router.get("/produtos", (_req, res) => {
-  res.status(200).json(produtos);
+router.get("/produtos", async (_req, res) => {
+  try {
+    const produtos = await listarProdutos();
+
+    return res.status(200).json(produtos);
+  } catch (erro) {
+    console.error(erro);
+
+    return res.status(500).json({
+      mensagem: "Erro ao listar produtos"
+    });
+  }
 });
 
-router.get("/produtos/:id", (req, res) => {
+router.get("/produtos/:id", async (req, res) => {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id) || id <= 0) {
@@ -17,18 +32,26 @@ router.get("/produtos/:id", (req, res) => {
     });
   }
 
-  const produto = buscarProduto(id);
+  try {
+    const produto = await buscarProduto(id);
 
-  if (!produto) {
-    return res.status(404).json({
-      mensagem: "Produto não encontrado"
+    if (!produto) {
+      return res.status(404).json({
+        mensagem: "Produto não encontrado"
+      });
+    }
+
+    return res.status(200).json(produto);
+  } catch (erro) {
+    console.error(erro);
+
+    return res.status(500).json({
+      mensagem: "Erro ao buscar produto"
     });
   }
-
-  return res.status(200).json(produto);
 });
 
-router.post("/produtos", (req, res) => {
+router.post("/produtos", async (req, res) => {
   const { nome, preco, estoque } = req.body;
 
   if (
@@ -46,21 +69,24 @@ router.post("/produtos", (req, res) => {
     });
   }
 
-  const novoProduto = {
-    id: Math.max(0, ...produtos.map((produto) => produto.id)) + 1,
-    nome: nome.trim(),
-    preco,
-    estoque
-  };
+  try {
+    const novoProduto = await criarProduto(
+      nome.trim(),
+      preco,
+      estoque
+    );
 
-  produtos.push(novoProduto);
+    return res.status(201).json(novoProduto);
+  } catch (erro) {
+    console.error(erro);
 
-  return res.status(201).json(novoProduto);
+    return res.status(500).json({
+      mensagem: "Erro ao cadastrar produto"
+    });
+  }
 });
 
-
-
-router.post("/produtos/:id/reservas", (req, res) => {
+router.post("/produtos/:id/reservas", async (req, res) => {
   const id = Number(req.params.id);
   const { quantidade } = req.body;
 
@@ -75,35 +101,34 @@ router.post("/produtos/:id/reservas", (req, res) => {
     });
   }
 
-  const produto = buscarProduto(id);
+  try {
+    const resultado = await reservarProduto(id, quantidade);
 
-  if (!produto) {
-    return res.status(404).json({
-      mensagem: "Produto não encontrado"
-    });
-  }
-
-  
-  if (produto.estoque < quantidade) {
-    return res.status(409).json({
-      mensagem: "Estoque insuficiente",
-      codigo: "ESTOQUE_INSUFICIENTE"
-    });
-  }
-
-
-  produto.estoque -= quantidade;
-
-  return res.status(200).json({
-    reservado: quantidade,
-    estoqueRestante: produto.estoque,
-    produto: {
-      id: produto.id,
-      nome: produto.nome,
-      preco: produto.preco
+    if (resultado.tipo === "nao_encontrado") {
+      return res.status(404).json({
+        mensagem: "Produto não encontrado"
+      });
     }
-  });
-});
 
+    if (resultado.tipo === "estoque_insuficiente") {
+      return res.status(409).json({
+        mensagem: "Estoque insuficiente",
+        codigo: "ESTOQUE_INSUFICIENTE"
+      });
+    }
+
+    return res.status(200).json({
+      reservado: resultado.reservado,
+      estoqueRestante: resultado.estoqueRestante,
+      produto: resultado.produto
+    });
+  } catch (erro) {
+    console.error(erro);
+
+    return res.status(500).json({
+      mensagem: "Erro ao reservar estoque"
+    });
+  }
+});
 
 export default router;

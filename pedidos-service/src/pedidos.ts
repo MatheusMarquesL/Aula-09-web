@@ -1,12 +1,40 @@
+import { PrismaClient } from "@prisma/client";
 
-import { Pedido } from "./types";
+const prisma = new PrismaClient();
 
-export const pedidos: Pedido[] = [];
-
-export function buscarPedido(id: number): Pedido | undefined {
-  return pedidos.find((pedido) => pedido.id === id);
+export async function criarPedido(dados: {
+  produtoId: number;
+  quantidade: number;
+  total: number;
+  clienteEmail: string;
+  status: string;
+  notificacaoStatus: string;
+}) {
+  return prisma.pedido.create({
+    data: dados
+  });
 }
 
-export function proximoId(): number {
-  return Math.max(0, ...pedidos.map((pedido) => pedido.id)) + 1;
+export async function listarPedidos() {
+  return prisma.pedido.findMany({
+    orderBy: {
+      id: "asc"
+    }
+  });
+}
+
+export async function buscarPedido(id: number) {
+  return prisma.pedido.findUnique({
+    where: { id }
+  });
+}
+
+export async function atualizarNotificacao(
+  id: number,
+  notificacaoStatus: string
+) {
+  return prisma.pedido.update({
+    where: { id },
+    data: { notificacaoStatus }
+  });
 }

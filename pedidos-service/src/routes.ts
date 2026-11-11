@@ -1,6 +1,13 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { pedidos, buscarPedido, proximoId } from "./pedidos";
+
+import {
+  criarPedido,
+  listarPedidos,
+  buscarPedido,
+  atualizarNotificacao
+} from "./pedidos";
+
 import { ReservaResposta } from "./types";
 
 const router = Router();
@@ -14,7 +21,7 @@ if (!CATALOG_URL || !NOTIFICATION_URL) {
 
 async function chamarServico(
   url: string,
-  options: RequestInit,
+  options: RequestInit
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
@@ -22,13 +29,14 @@ async function chamarServico(
   try {
     return await fetch(url, {
       ...options,
-      signal: controller.signal,
+      signal: controller.signal
     });
   } finally {
     clearTimeout(timer);
   }
 }
 
+// Criar pedido
 router.post("/pedidos", async (req, res) => {
   const correlationId = req.get("x-correlation-id") || randomUUID();
 
@@ -36,7 +44,7 @@ router.post("/pedidos", async (req, res) => {
 
   res.on("finish", () => {
     console.log(
-      `[${correlationId}] pedidos resultado status=${res.statusCode}`,
+      `[${correlationId}] pedidos resultado status=${res.statusCode}`
     );
   });
 
@@ -54,7 +62,7 @@ router.post("/pedidos", async (req, res) => {
   ) {
     return res.status(400).json({
       mensagem: "Dados do pedido são inválidos",
-      codigo: "PEDIDO_INVALIDO",
+      codigo: "PEDIDO_INVALIDO"
     });
   }
 
@@ -67,27 +75,27 @@ router.post("/pedidos", async (req, res) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-correlation-id": correlationId,
+          "x-correlation-id": correlationId
         },
-        body: JSON.stringify({ quantidade }),
-      },
+        body: JSON.stringify({ quantidade })
+      }
     );
   } catch (erro) {
     if (erro instanceof Error && erro.name === "AbortError") {
       return res.status(504).json({
         mensagem: "Catálogo demorou para responder",
-        codigo: "CATALOGO_TIMEOUT",
+        codigo: "CATALOGO_TIMEOUT"
       });
     }
 
     return res.status(502).json({
       mensagem: "Catálogo indisponível",
-      codigo: "CATALOGO_INDISPONIVEL",
+      codigo: "CATALOGO_INDISPONIVEL"
     });
   }
 
   console.log(
-    `[${correlationId}] catalogo POST reserva status=${respostaReserva.status}`,
+    `[${correlationId}] catalogo POST reserva status=${respostaReserva.status}`
   );
 
   if (!respostaReserva.ok) {
@@ -95,30 +103,38 @@ router.post("/pedidos", async (req, res) => {
 
     if (status === 400 || status === 404 || status === 409) {
       const dados = await respostaReserva.json();
-
       return res.status(status).json(dados);
     }
 
     return res.status(502).json({
       mensagem: "Catálogo indisponível",
-      codigo: "CATALOGO_INDISPONIVEL",
+      codigo: "CATALOGO_INDISPONIVEL"
     });
   }
 
   const reserva = (await respostaReserva.json()) as ReservaResposta;
 
-  const pedido = {
-    id: proximoId(),
-    produtoId,
-    quantidade,
-    total: reserva.produto.preco * quantidade,
-    clienteEmail,
-    status: "confirmado",
-    notificacaoStatus: "pendente",
-  };
+  let pedido;
 
-  pedidos.push(pedido);
+  try {
+    pedido = await criarPedido({
+      produtoId,
+      quantidade,
+      total: reserva.produto.preco * quantidade,
+      clienteEmail,
+      status: "confirmado",
+      notificacaoStatus: "pendente"
+    });
+  } catch (erro) {
+    console.error("Erro ao salvar pedido:", erro);
 
+    return res.status(500).json({
+      mensagem: "Erro ao salvar pedido",
+      codigo: "ERRO_AO_SALVAR_PEDIDO"
+    });
+  }
+
+  // Enviar notificação
   try {
     const respostaNotificacao = await chamarServico(
       `${NOTIFICATION_URL}/notificacoes`,
@@ -126,52 +142,74 @@ router.post("/pedidos", async (req, res) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-correlation-id": correlationId,
+          "x-correlation-id": correlationId
         },
         body: JSON.stringify({
           pedidoId: pedido.id,
           destino: clienteEmail,
-          mensagem: `Pedido ${pedido.id} confirmado`,
-        }),
-      },
+          mensagem: `Pedido ${pedido.id} confirmado`
+        })
+      }
     );
 
     console.log(
-      `[${correlationId}] notificacoes POST /notificacoes status=${respostaNotificacao.status}`,
+      `[${correlationId}] notificacoes POST /notificacoes status=${respostaNotificacao.status}`
     );
 
     if (respostaNotificacao.ok) {
-      pedido.notificacaoStatus = "enviada";
+      pedido = await atualizarNotificacao(pedido.id, "enviada");
     }
-  } catch {
-    console.log(`[${correlationId}] notificacoes indisponível`);
+  } catch (erro) {
+    console.log(
+      `[${correlationId}] notificacoes indisponível ou falha ao atualizar status`
+    );
   }
 
   return res.status(201).json(pedido);
 });
 
-router.get("/pedidos", (_req, res) => {
-  return res.status(200).json(pedidos);
+// Listar pedidos
+router.get("/pedidos", async (_req, res) => {
+  try {
+    const pedidos = await listarPedidos();
+
+    return res.status(200).json(pedidos);
+  } catch (erro) {
+    console.error(erro);
+
+    return res.status(500).json({
+      mensagem: "Erro ao listar pedidos"
+    });
+  }
 });
 
-router.get("/pedidos/:id", (req, res) => {
+// Buscar pedido por ID
+router.get("/pedidos/:id", async (req, res) => {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({
-      mensagem: "ID inválido",
+      mensagem: "ID inválido"
     });
   }
 
-  const pedido = buscarPedido(id);
+  try {
+    const pedido = await buscarPedido(id);
 
-  if (!pedido) {
-    return res.status(404).json({
-      mensagem: "Pedido não encontrado",
+    if (!pedido) {
+      return res.status(404).json({
+        mensagem: "Pedido não encontrado"
+      });
+    }
+
+    return res.status(200).json(pedido);
+  } catch (erro) {
+    console.error(erro);
+
+    return res.status(500).json({
+      mensagem: "Erro ao buscar pedido"
     });
   }
-
-  return res.status(200).json(pedido);
 });
 
 export default router;
